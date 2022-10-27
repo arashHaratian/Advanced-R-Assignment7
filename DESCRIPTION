@@ -23,5 +23,6 @@ Imports:
     nycflights13,
     rsample,
     caret,
-    mlbench
+    mlbench,
+    leaps
 VignetteBuilder: knitr
