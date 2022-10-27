@@ -1,0 +1,228 @@
+---
+title: "ridgereg"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ridgereg}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(lab7package)
+```
+
+
+In this vignette, we use three models to predict the `medv` from `BostonHousing` data set using other independent variables.
+
+# 1. Divide The Data  
+
+First we should scale the data and then divide the data into two partitions, training dataset and test dataset.
+
+```{r}
+data("BostonHousing", package = "mlbench")
+set.seed(1378)
+BostonHousing[, -c(4,14)] <- scale(BostonHousing[, -c(4,14)])
+housing_split <- rsample::initial_split(BostonHousing, prop = 0.85)
+
+train_data <- rsample::training(housing_split)
+test_data <- rsample::testing(housing_split)
+```
+
+# 2. Fitting Different Models
+
+## 2.1. Linear Regression Model
+
+To fit a linear model, `lab7package::linreg` class. For first model, all the covariates are used.
+
+```{r}
+linreg_all <- lab7package::linreg$new(medv ~ ., train_data)
+linreg_all$summary()
+```
+
+## 2.2. Linear Model and Forward Selection
+
+Now, another linear model will be trained. Instead of using all covariates, forward selection is going to be used to choose the covariates with significant `p_value`.
+
+```{r}
+set.seed(1378)
+linear_forward_selection <-
+  caret::train(
+    medv ~ .,
+    data = train_data,
+    method = "leapForward",
+    tuneGrid = data.frame(nvmax = 1:13),
+    trControl = caret::trainControl("cv")
+  )
+
+best_model <- linear_forward_selection$bestTune[[1]]
+coef(linear_forward_selection$finalModel, best_model)
+```
+
+TODO
+NOTE: if we do not use any `trControl`  in the `caret::train()`, we may end up with all the variables as the best model. Also, with `caret` package I could not manage to check the model with only intercept as the dependent variable, so I will write forward selection in another way as well but I will use the `caret` model for the comparison.
+
+```{r}
+interceprt_model <- stats::lm(medv~1, train_data)
+full_model <- stats::lm(medv ~ crim + zn + indus + chas + nox + rm + age + dis + rad + tax + ptratio + b + lstat, train_data)
+stats::step(interceprt_model,scope=list(upper = full_model, lower = interceprt_model), direction="forward")
+```
+
+# 3. Evaluate the performance
+
+For `linreg_all` we have:
+```{r}
+linreg_all$summary()
+SSres <- sum((linreg_all$residual_val)^2)
+y_bar <- mean(train_data[['medv']])
+SStot <- sum((train_data[['medv']] - y_bar)^2)
+R_squared_linreg <- 1 - (SSres / SStot)
+R_squared_linreg
+```
+
+And for linear regression with forward selection we have:
+
+```{r}
+(linear_forward_selection$results)[best_model, ]
+```
+
+The `RMSE` of the linear model with all the variables is `r sqrt(linreg_all$res_var)`, and the `RMSE` of the model with 11 variables is `r (linear_forward_selection$results)[best_model, "RMSE"]`. Also, the $R^2$ for `lireg_all` is `r R_squared_linreg` while this statistic for the `linear_forward_selection` is `r (linear_forward_selection$results)[best_model, "Rsquared"]`.
+
+
+# 4. Ridge Regression
+
+In this section, `ridgereg()` will be used to find the best value of `lambda`. But first we have to create our custom model in `caret`. We should write some components for our custom model:
+
+
+```{r}
+# Model elements
+ridgereg_caret <- list(
+  type = "Regression",
+  library = "lab7package",
+  loop = NULL,
+  prob = NULL,
+  label = "ridgereg caret",
+  parameters = data.frame(
+    parameter = "lambda",
+    class = "numeric",
+    label = "lambda"
+  ),
+  grid = function(x)
+    data.frame(lambda = x)
+)
+
+ridgereg_caret$fit <-
+  function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+    y_name <- names(which.max(colSums(x == y)))
+    model_formula <- as.formula(paste(y_name, "~ ."))
+    # print(x)
+    # print(class(y))
+    # print(as.character(model_formula))
+    
+    lab7package::ridgereg$new(model_formula, data = x, lambda = param$lambda)
+  }
+ridgereg_caret$predict <-
+  function(modelFit,
+           newdata,
+           preProc = NULL,
+           submodels = NULL) {
+    modelFit$predict(newdata)
+  }
+
+```
+
+Now, we can try to find the best value for `lambda` using `tuneGrid` argument of `caret::train()`:
+
+```{r}
+set.seed(1378)
+ridgereg_model <- caret::train(x = train_data, y = train_data[,14],
+                               method=ridgereg_caret, 
+                               form = medv~.,
+                               tuneGrid = data.frame(lambda = seq(1, 5, 1))
+)
+ridgereg_model
+```
+# 5. 10-Fold Cross-Validation and Ridge Regression
+
+It seems best value of lambda is `r as.vector(unlist(ridgereg_model$bestTune))`. We can make sure about this conclusion just by running the same process but with 10-fold cross-validation:
+
+
+```{r}
+set.seed(1378)
+ridgereg_model_10k <-
+  caret::train(
+    x = train_data, y = train_data[, 14],
+    form = medv ~ .,
+    method = ridgereg_caret,
+    tuneGrid = data.frame(lambda = seq(1, 5, 1)),
+    trControl = caret::trainControl(
+      ## 10-fold CV
+      method = "repeatedcv",
+      number = 10,
+      repeats = 10
+    )
+  )
+
+ridgereg_model_10k
+```
+
+The best `lambda` based on the results of 10-fold cross validation is `r unlist(ridgereg_model_10k$bestTune)`.
+
+# 6. Performance of Models on Test Data
+
+```{r}
+y_hat <- as.vector(linreg_all$predict(test_data))
+residual_val <- test_data$medv - y_hat
+SSres <- sum((residual_val)^2)
+y_bar <- mean(test_data[['medv']])
+SStot <- sum((test_data[['medv']] - y_bar)^2)
+RMSE_linreg_all <- sqrt(SSres/nrow(test_data))
+RMSE_linreg_all
+R_squared_linreg <- 1 - (SSres / SStot)
+R_squared_linreg
+```
+
+
+The performnace of the simple linear regression with all the covariates:
+
+* $R^2 =$ `r R_squared_linreg`
+
+* `RMSE = ` `r RMSE_linreg_all`
+
+
+```{r}
+RMSE_squared_fs <- caret::RMSE(predict(linear_forward_selection, test_data), test_data$medv)
+R_squared_fs <- caret::R2(predict(linear_forward_selection, test_data), test_data$medv)
+RMSE_squared_fs
+R_squared_fs
+```
+
+The performnace of the simple linear regression which uses forward selection (11 covariates):
+
+* $R^2 =$ `r R_squared_fs`
+
+* `RMSE = ` `r RMSE_squared_fs`
+
+
+```{r}
+RMSE_squared_ridge <- caret::RMSE(predict(ridgereg_model_10k, test_data), test_data$medv)
+R_squared_ridge <- caret::R2(predict(ridgereg_model_10k, test_data), test_data$medv)
+RMSE_squared_ridge
+R_squared_ridge
+
+```
+
+The performance of the ridge regression:
+
+* $R^2 =$ `r R_squared_ridge`
+
+* `RMSE = ` `r RMSE_squared_ridge`
+
+Based in the results, `RMSE` and $R^2$ for ridge regression are the lowest ones, following by linear regression with forward selection and at last linear regression with all the variables.
+Ridge regression and linear model with forward selection will work almost similar to each other since both will shrink the effect of all variables.
