@@ -12,6 +12,7 @@
 #' @field var_reg Variance of the Regression Coefficients
 #' @field t_values t-values of the coefficients
 #' @field p_values p-values of the coefficients
+#' @field formula formula of the model
 #' @field call Function Call as a string
 #'
 #' @import methods
@@ -28,6 +29,7 @@ linreg <- setRefClass(
     var_reg = "numeric",
     t_values = "numeric",
     p_values = "numeric",
+    formula = "formula",
     call = "character"
   ),
   methods = list(
@@ -59,6 +61,7 @@ linreg <- setRefClass(
       names(beta_vector) <- rownames(beta_local)
       .self$beta <- beta_vector
 
+      .self$formula <- formula
       formula_string <- as.character(formula)
       .self$call <- paste0(
         "linreg(formula = ",
@@ -122,6 +125,15 @@ linreg <- setRefClass(
         "fig2" <- fig_2
       )
       return(result)
+    },
+    #----------------- predict
+    predict = function(new_x){
+      stopifnot(
+        is.data.frame(new_x)
+      )
+      new_x_matrix <- model.matrix(.self$formula, new_x)
+      y_hat <- new_x_matrix %*% matrix(.self$beta, ncol = 1)
+      return(y_hat)
     },
 
     #-------------------- 3 small functions:)

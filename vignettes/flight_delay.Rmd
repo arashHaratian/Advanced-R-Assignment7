@@ -1,0 +1,144 @@
+---
+title: "flight_delay"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{flight_delay}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(lab7package)
+```
+
+
+# 1. Loading the flight and weather data
+
+First, the data has been loaded and useful variables have been selected. Furthermore the two datasets have been join together using `origin`, `month`, `day`, `hour` variables in both `weather` and `flight` dataset. All the missing values also have been removed.
+
+```{r}
+data("flights", package = "nycflights13")
+data("weather", package = "nycflights13")
+
+
+weather <- weather %>% 
+  dplyr::select(!c(wind_gust, year, time_hour))
+
+  #removing some  destinations that have low number of samples
+selected_dest <- flights %>% 
+  dplyr::group_by(dest) %>%
+  dplyr::count() %>% 
+  dplyr::filter(n > 50)
+
+
+dataset <- flights %>% 
+  dplyr::filter(dest %in% selected_dest$dest) %>% 
+  # joining the weather data
+  dplyr::inner_join(weather, c(origin = "origin", month = "month", day = "day", hour = "hour")) %>% 
+  # selecting the useful data
+  dplyr::select(month, dep_delay, arr_delay, air_time, dest, distance, hour, temp, dewp, humid, wind_dir, wind_speed, precip, pressure, visib) %>%
+  # converting month, hour and minute to character so that they will use as factors
+  dplyr::mutate(month = as.character(month), hour = as.character(hour)) %>% 
+  # scaling the data
+  dplyr::mutate(dplyr::across(where(is.numeric) & !dep_delay, scale)) %>% 
+  na.omit()
+
+
+dataset
+```
+
+
+
+# 2. Splitting Data
+
+Here, the dataset will be split to three different datasets(for training, testing and validating the ridge regression)
+
+```{r}
+# 80% of data is going to be used in training dataset
+set.seed(1378)
+train_index <- caret::createDataPartition(
+  dataset$dep_delay,
+  p = .8, 
+  list = FALSE, 
+  times = 1
+)
+
+train_data <- dataset[train_index,]
+remainder <- dataset[-train_index,]
+
+# Splitting the remainder of the dataset to validation and test sets
+set.seed(1378)
+test_index <-caret::createDataPartition(
+  remainder$dep_delay,
+  p = .25, 
+  list = FALSE, 
+  times = 1
+)
+
+test_data <- remainder[test_index, ]
+validation_data <- remainder[-test_index, ]
+
+```
+
+# 3. Training Ridge Regression
+
+First we have to find the best value of `lambda` using the `RMSE` statistic on the validation dataset.
+
+```{r}
+lambdas <- seq(1, 4, by =0.5)
+
+RMSEs <- purrr::map(lambdas, ~{
+  ridge_model <- ridgereg$new(dep_delay~., train_data, lambda = .x)
+  
+  # calculating RMSE
+  y_hat <- ridge_model$predict(validation_data)
+  error <- validation_data$dep_delay -  as.vector(y_hat)
+  sqrt(mean(error^2))
+})
+best_lambda <- lambdas[which.min(RMSEs)]
+cat("best lambda value is:  ", lambdas[which.min(RMSEs)], "\nRMSE = ", RMSEs[[which.min(RMSEs)]])
+
+```
+
+
+It seems the value of `lambda` should be `r `best_lambda` to have the best RMSE on the validation set. Now we can a ridge regression with lambda equal to `r best_lambda` and finally predict the  `dep_delay` for the test dataset.
+
+```{r}
+ridge_model <- ridgereg$new(dep_delay~., train_data, lambda = best_lambda)
+y_hat <- ridge_model$predict(test_data)
+```
+
+
+Now we can calculate the RMSE on the test dataset:
+
+```{r}
+error <- test_data$dep_delay -  as.vector(y_hat)
+sqrt(mean(error^2))
+```
+
+The RMSE on the test data is `r sqrt(mean(error^2))`  which is close to the RMSE on the validation data, and this means the model did not overfit on the train data.
+Also we can calculate the $R^2$:
+
+```{r}
+error <- train_data$dep_delay -  as.vector(ridge_model$pred())
+SSres <- sum(error^2)
+SStot <- sum((train_data$dep_delay -  mean(train_data$dep_delay))^2)
+R2_train <- 1- SSres/SStot
+R2_train
+
+error <- test_data$dep_delay -  as.vector(y_hat)
+SSres <- sum(error^2)
+SStot <- sum((test_data$dep_delay -  mean(test_data$dep_delay))^2)
+R2_test <- 1 - SSres/SStot
+R2_test
+```
+
+
+The R squared of the train dataset is `r R2_train` and the R squared of the test dataset is `r R2_test` which means that our model managed to explain the good percentage of the variance of  `dep_delay` variable.

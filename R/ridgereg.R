@@ -40,20 +40,13 @@ ridgereg <- setRefClass(
       )
 
       dependent <- all.vars(formula)[1]
-      scaled_data <- data
-      for(i in seq_along(data)){
-        if(is.numeric(data[, i]) && names(data[i]) != dependent){
-          scaled_data[, i] <- scale(data[, i])
-        }
-      }
 
-      X <- model.matrix(formula, scaled_data)
+      X <- model.matrix(formula, data)
 
       n <- nrow(X)
       p <- ncol(X)
 
-
-      beta_local <- solve(t(X) %*% X + diag(lambda, p)) %*% t(X) %*% data[[dependent]]
+      beta_local <- solve(t(X) %*% X +lambda*diag(ncol(X))) %*% t(X) %*% data[[dependent]]
       .self$fitted_val <- as.vector(X %*% beta_local)
       residual_val_local <- data[[dependent]] - .self$fitted_val
       .self$residual_val <- as.vector(residual_val_local)
@@ -102,8 +95,8 @@ ridgereg <- setRefClass(
         # (names(.self$beta))[-1]  %in% names(new_x)
       )
       new_x_matrix <- model.matrix(.self$formula, new_x)
-      print(colnames(new_x_matrix))
-      y_hat <- new_x_matrix %*% matrix(.self$beta, ncol = 1)
+      beta_hat <- matrix(.self$beta, ncol = 1)
+      y_hat <- new_x_matrix %*% beta_hat
       return(y_hat)
     },
     #-------------------- 3 small functions from linreg:)
