@@ -10,6 +10,8 @@ _This is the repo for bonus lab assignment for Advanced R Programming_
 
 To install the package, use the following command in your R session:
 
+> NB: PLEASE BE AWARE THAT IT MAY TAKE TIME TO BUILD THE VIGNETTES!
+
 ```r
 # You have to install devtools before executing the command
 # install.packages("devtools")
